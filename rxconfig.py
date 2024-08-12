@@ -1,5 +1,5 @@
 import reflex as rx
 
 config = rx.Config(
-    app_name="hosebeast_2",
+    app_name="hosebeast",
 )
