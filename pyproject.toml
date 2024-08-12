@@ -1,19 +1,17 @@
-[tool.poetry]
-name = "hosebeast"
+[project]
+name = "hosebeast-2"
 version = "0.1.0"
-description = ""
-authors = ["Evan Jones <evan_t_jones@mac.com>"]
+description = "Add your description here"
 readme = "README.md"
-
-# NOTE: the RasPi 3B I'm running this on seems to just hang when
-# `poetry` is started; best to install these dependencies with `pip`
-[tool.poetry.dependencies]
-python = "^3.11"
-reflex = "^0.5.7"
-gpiozero = "^2.0.1"
-rpi.GPIO = "^0.7.1"
-adafruit-circuitpython-ads1x15 = "^2.2.26"
+requires-python = ">=3.11"
+dependencies = [
+    "reflex>=0.5.9",
+    "gpiozero>=2.0.1",
+    "rpi-gpio>=0.7.1",
+    "adafruit-circuitpython-ads1x15>=2.3.0",
+    "sqlite-utils>=3.37",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
