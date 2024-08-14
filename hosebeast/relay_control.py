@@ -63,8 +63,15 @@ PIN_NAMES = {
     RELAY_2: "Relay 2",
 }
 
+IS_CONFIGURED = False
 
 def configure_relays():
+    # This call is idempotent; calling it more than once is a no-op
+    global IS_CONFIGURED
+    if IS_CONFIGURED:
+        return
+    IS_CONFIGURED = True
+
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
     GPIO.setup(RELAY_1, GPIO.OUT)
@@ -72,6 +79,7 @@ def configure_relays():
 
 
 def set_relay(relay_pin: int, state: bool):
+    configure_relays()
     desc = PIN_NAMES.get(relay_pin)
     if desc:
         print(f"{desc} {'ON' if state else 'OFF'} ")
