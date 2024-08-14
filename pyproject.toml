@@ -1,7 +1,7 @@
 [project]
-name = "hosebeast-2"
+name = "Hosebeast"
 version = "0.1.0"
-description = "Add your description here"
+description = "Irrigation control system for RaspBerry Pi 4"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
