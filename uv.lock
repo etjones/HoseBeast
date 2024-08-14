@@ -470,6 +470,7 @@ source = { editable = "." }
 dependencies = [
     { name = "adafruit-circuitpython-ads1x15" },
     { name = "gpiozero" },
+    { name = "mock-gpio" },
     { name = "reflex" },
     { name = "rpi-gpio" },
     { name = "sqlite-utils" },
@@ -671,6 +672,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979 },
+]
+
+[[package]]
+name = "mock-gpio"
+version = "0.1.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/53/5c55e56f955e75e6db75f551749a6f49bda467a84488bd29dc4cad5ac305/Mock.GPIO-0.1.8.tar.gz", hash = "sha256:f66b270da2980e3f234e1d45395aa3147bd9bd25d97f2ff404c6dbe09ee8634f", size = 5007 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/7f/ad4d46489b7e4b5eaf4dd8cc53ae2ea17f08e167bff0337b595e3a26675e/Mock.GPIO-0.1.8-py3-none-any.whl", hash = "sha256:1fe27652ccfa580081b903707274f761c72177abae79f015774ee4009f50afe6", size = 4992 },
 ]
 
 [[package]]

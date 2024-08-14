@@ -1,8 +1,13 @@
 #! /usr/bin/env python3
 
-import RPi.GPIO as GPIO
 import asyncio
 import time
+
+try:
+    import RPi.GPIO as GPIO
+except Exception:
+    print("Error importing RPi.GPIO. Using Mock.GPIO instead")
+    import Mock.GPIO as GPIO
 
 """
 Demo Pinout & wiring:
@@ -76,11 +81,13 @@ async def relay_on(relay_pin: int, duration: float):
     if desc:
         print(f"{get_elapsed():5.2f}: {desc} OFF")
 
+
 async def stagger_relay_starts():
     task1 = asyncio.create_task(relay_on(RELAY_1, 2))
     await asyncio.sleep(1)  # Stagger RELAY_2 by 1 second
     task2 = asyncio.create_task(relay_on(RELAY_2, 2))
     await asyncio.gather(task1, task2)
+
 
 def get_elapsed() -> float:
     return time.time() - START_TIME

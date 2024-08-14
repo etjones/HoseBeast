@@ -7,10 +7,12 @@ requires-python = ">=3.11"
 dependencies = [
     "reflex>=0.5.9",
     "gpiozero>=2.0.1",
-    "rpi-gpio>=0.7.1",
+    "rpi-gpio>=0.7.1; platform_machine=='armv7l' or platform_machine=='aarch64'",
+    "mock-gpio>=0.1.8; platform_machine!='armv7l' and platform_machine!='aarch64'",
     "adafruit-circuitpython-ads1x15>=2.3.0",
     "sqlite-utils>=3.37",
 ]
+
 
 [build-system]
 requires = ["hatchling"]
