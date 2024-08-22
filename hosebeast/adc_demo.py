@@ -3,13 +3,6 @@ import board
 import busio
 import time
 
-# I had to manually enable I2C, a communication bus,
-# on this RasPi 3B+. The commands were:
-# sudo raspi-config
-# (menus: Interfacing Options -> I2C -> Enable -> Finish)
-# reboot Pi
-i2c = busio.I2C(board.SCL, board.SDA)
-
 import adafruit_ads1x15.ads1115 as ADS  # noqa: E402
 from adafruit_ads1x15.analog_in import AnalogIn  # noqa: E402
 
@@ -22,6 +15,12 @@ from adafruit_ads1x15.analog_in import AnalogIn  # noqa: E402
 
 
 def main():
+    # I had to manually enable I2C, a communication bus, on RasPis.
+    # The commands were:
+    # sudo raspi-config
+    # (menus: Interfacing Options -> I2C -> Enable -> Finish)
+    # reboot Pi
+    i2c = busio.I2C(board.SCL, board.SDA)
     ads = ADS.ADS1115(i2c)
 
     measure_voltage_difference = False
