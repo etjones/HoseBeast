@@ -1,8 +1,8 @@
 version = 1
 requires-python = ">=3.11"
-environment-markers = [
-    "python_version < '3.13'",
-    "python_version >= '3.13'",
+resolution-markers = [
+    "python_full_version < '3.13'",
+    "python_full_version >= '3.13'",
 ]
 
 [[package]]
@@ -470,10 +470,20 @@ source = { editable = "." }
 dependencies = [
     { name = "adafruit-circuitpython-ads1x15" },
     { name = "gpiozero" },
-    { name = "mock-gpio" },
+    { name = "mock-gpio", marker = "platform_machine != 'aarch64' and platform_machine != 'armv7l'" },
     { name = "reflex" },
-    { name = "rpi-gpio" },
+    { name = "rpi-gpio", marker = "platform_machine == 'aarch64' or platform_machine == 'armv7l'" },
     { name = "sqlite-utils" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "adafruit-circuitpython-ads1x15", specifier = ">=2.3.0" },
+    { name = "gpiozero", specifier = ">=2.0.1" },
+    { name = "mock-gpio", marker = "platform_machine != 'aarch64' and platform_machine != 'armv7l'", specifier = ">=0.1.8" },
+    { name = "reflex", specifier = ">=0.5.9" },
+    { name = "rpi-gpio", marker = "platform_machine == 'aarch64' or platform_machine == 'armv7l'", specifier = ">=0.7.1" },
+    { name = "sqlite-utils", specifier = ">=3.37" },
 ]
 
 [[package]]
@@ -543,7 +553,7 @@ name = "jaraco-context"
 version = "5.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "backports-tarfile", marker = "python_version < '3.12'" },
+    { name = "backports-tarfile", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c9/60/e83781b07f9a66d1d102a0459e5028f3a7816fdd0894cba90bee2bbbda14/jaraco.context-5.3.0.tar.gz", hash = "sha256:c2f67165ce1f9be20f32f650f25d8edfc1646a8aeee48ae06fb35f90763576d2", size = 13345 }
 wheels = [
@@ -588,7 +598,7 @@ name = "keyring"
 version = "25.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "importlib-metadata", marker = "python_version < '3.12'" },
+    { name = "importlib-metadata", marker = "python_full_version < '3.12'" },
     { name = "jaraco-classes" },
     { name = "jaraco-context" },
     { name = "jaraco-functools" },
@@ -1173,7 +1183,7 @@ name = "sqlalchemy"
 version = "2.0.32"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "greenlet", marker = "(python_version < '3.13' and platform_machine == 'AMD64') or (python_version < '3.13' and platform_machine == 'WIN32') or (python_version < '3.13' and platform_machine == 'aarch64') or (python_version < '3.13' and platform_machine == 'amd64') or (python_version < '3.13' and platform_machine == 'ppc64le') or (python_version < '3.13' and platform_machine == 'win32') or (python_version < '3.13' and platform_machine == 'x86_64')" },
+    { name = "greenlet", marker = "(python_full_version < '3.13' and platform_machine == 'AMD64') or (python_full_version < '3.13' and platform_machine == 'WIN32') or (python_full_version < '3.13' and platform_machine == 'aarch64') or (python_full_version < '3.13' and platform_machine == 'amd64') or (python_full_version < '3.13' and platform_machine == 'ppc64le') or (python_full_version < '3.13' and platform_machine == 'win32') or (python_full_version < '3.13' and platform_machine == 'x86_64')" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/af/6f/967e987683908af816aa3072c1a6997ac9933cf38d66b0474fb03f253323/SQLAlchemy-2.0.32.tar.gz", hash = "sha256:c1b88cc8b02b6a5f0efb0345a03672d4c897dc7d92585176f88c67346f565ea8", size = 9546691 }
