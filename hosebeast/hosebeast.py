@@ -9,7 +9,8 @@ import math
 import time
 
 from datetime import datetime, timedelta
-from .pages import index, about, profile, settings, table  # noqa: F401
+
+# from .pages import index, about, profile, settings, table  # noqa: F401
 from .templates import template
 from . import styles
 from .relay_control import set_relay, RELAY_1, RELAY_2
@@ -39,6 +40,8 @@ app = rx.App(
 
 VALID_TIME_RANGES = ["day", "week", "month", "all"]
 
+SENSOR: SomeADCWrapper = get_adc_channel(0, gain=1.0)
+
 
 class HosebeastState(rx.State):
     """The app state."""
@@ -53,7 +56,6 @@ class HosebeastState(rx.State):
     time_range: str = "day"  # one of VALID_TIME_RANGES
     depth_data: list[dict[str, float]] = []
 
-    _pressure_sensor: SomeADCWrapper = get_adc_channel(0, gain=1.0)
     _update_secs: int = 2
     _update_is_running: bool = False
     _db_update_secs: int = 60
@@ -76,6 +78,9 @@ class HosebeastState(rx.State):
                 f"Invalid time range: {time_range}; must be one of {VALID_TIME_RANGES}"
             )
         self.time_range = time_range
+        self.update_depth_data()
+
+    def update_depth_data(self):
         # If we change the time range, we should reload the data
         self.depth_data = self.load_water_depth_data()
 
@@ -84,16 +89,31 @@ class HosebeastState(rx.State):
         depth = self.adc_raw * self._depth_slope + self._depth_intercept
         return round(depth, 2)
 
-    def handle_calibration_submit(self, form_dict: dict):
+    async def handle_calibration_submit(self, form_dict: dict):
         try:
             # Only calibrate if we have a valid float depth
             actual_depth = float(form_dict["actual_depth"])
-            self.calibrate_depth(actual_depth)
+            await self.calibrate_depth(actual_depth)
         except ValueError:
             print(f'Invalid depth: {form_dict["actual_depth"]}')
             return
 
-    def calibrate_depth(self, actual_depth: float):
+    async def average_raw_and_depths(
+        self, measurements=10, interval_s=1
+    ) -> tuple[int, float]:
+        measurements = int(max(measurements, 1))
+        total = 0
+        total_depth = 0
+        # average several readings before we record
+        for i in range(measurements):
+            total += self.adc_raw
+            total_depth += self.water_depth
+            await asyncio.sleep(1)
+        mean_raw = int(total / measurements)
+        mean_depth = float(total_depth / measurements)
+        return (mean_raw, mean_depth)
+
+    async def calibrate_depth(self, actual_depth: float):
         # TODO: Given a set of known depths and pressures, calculate the slope and intercept
         # of the line that best fits the data.
         # We should probably just store the data in the database and
@@ -104,23 +124,32 @@ class HosebeastState(rx.State):
         # 3. Store the slope and intercept in the database
         # 4. Use the slope and intercept to calculate the depth
 
+        mean_raw, mean_depth = await self.average_raw_and_depths()
+
         # Store actual_depth and adc_raw in the database
+        adc_gain = float(self.adc_gain)
         now_minute = datetime.now().replace(second=0, microsecond=0)
         DB["calibration_points"].insert(
             {
                 "timestamp": now_minute.timestamp(),
                 "datetime": now_minute.isoformat(),
+                "adc_raw": mean_raw,
                 "actual_depth": actual_depth,
-                "adc_raw": self.adc_raw,
+                "adc_gain": adc_gain,
             },
             pk="timestamp",
             replace=True,
+            alter=True,
+        )
+
+        print(
+            f"Calibration: {now_minute}: Storing raw value {mean_raw} for depth {actual_depth:.1f} cm"
         )
 
         # Retrieve all calibration points
         calibration_points = [
             (row["adc_raw"], float(row["actual_depth"]))
-            for row in DB["calibration_points"].rows
+            for row in DB["calibration_points"].rows_where("adc_gain = ?", [adc_gain])
         ]
 
         # Calculate slope and intercept
@@ -135,8 +164,11 @@ class HosebeastState(rx.State):
                 "datetime": now_minute.isoformat(),
                 "slope": self._depth_slope,
                 "intercept": self._depth_intercept,
+                "adc_gain": adc_gain,
             },
             pk="timestamp",
+            replace=True,
+            alter=True,
         )
 
     def load_calibration(self):
@@ -147,7 +179,7 @@ class HosebeastState(rx.State):
 
         if calibration:
             # ETJ DEBUG
-            print(f"Calibration: {calibration}")
+            print(f"Loaded calibration: {calibration}")
             # END DEBUG
             self._depth_slope = calibration["slope"]
             self._depth_intercept = calibration["intercept"]
@@ -215,13 +247,13 @@ class HosebeastState(rx.State):
 
     def update_adc_gain(self, gain: str):
         self.adc_gain = gain
-        self._pressure_sensor.gain = 2 / 3 if gain == "2/3" else int(gain)
+        SENSOR.gain = 2 / 3 if gain == "2/3" else int(gain)
 
-    def update_adc_voltage(self):
-        self.adc_voltage = round(self._pressure_sensor.voltage, 3)
-        self.adc_raw = self._pressure_sensor.value
+    async def update_adc_voltage(self):
+        self.adc_voltage = round(SENSOR.voltage, 3)
+        self.adc_raw = SENSOR.value
         # every minute, we'll store the pressure in the database
-        self.store_adc_state()
+        await self.store_adc_state()
 
     @rx.background
     async def start_adc_updates(self):
@@ -239,15 +271,17 @@ class HosebeastState(rx.State):
 
         while True:
             async with self:
-                self.update_adc_voltage()
+                await self.update_adc_voltage()
             await asyncio.sleep(self._update_secs)
 
-    def store_adc_state(self):
+    async def store_adc_state(self):
         now = time.time()
         # if we've already stored the data in the last self._db_update_secs
         # seconds, just return
         if now < self._last_db_time + self._db_update_secs:
             return
+
+        mean_raw, mean_depth = await self.average_raw_and_depths()
 
         # We haven't stored the data in the last self._db_update_secs seconds,
         # so store it now
@@ -258,11 +292,13 @@ class HosebeastState(rx.State):
         row = {
             "timestamp": this_minute.timestamp(),
             "datetime": this_minute.isoformat(),
-            "raw_value": int(self.adc_raw),
-            "water_depth": float(self.water_depth),
+            "raw_value": mean_raw,
+            "water_depth": mean_depth,
         }
-        # print(f"Storing ADC state: {row}")
+        print(f"Storing ADC state: {row}")
         DB["water_depths"].insert(row, pk="timestamp", replace=True)
+        # Every time we store data, let's reload the graph data, too
+        self.update_depth_data()
 
 
 # ===========
@@ -288,8 +324,11 @@ def linear_regression_with_outlier_removal(
         sum_y = sum(y for _, y in pts)
         sum_xy = sum(x * y for x, y in pts)
         sum_xx = sum(x * x for x, _ in pts)
-
-        slope = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x * sum_x)
+        denom = n * sum_xx - sum_x * sum_x
+        # avoid divide by zero
+        if n == 0 or denom == 0:
+            return (0, 0)
+        slope = (n * sum_xy - sum_x * sum_y) / denom
         intercept = (sum_y - slope * sum_x) / n
         return slope, intercept
 
@@ -325,43 +364,49 @@ def linear_regression_with_outlier_removal(
 def hosebeast_layout() -> rx.Component:
     """The main layout of the app."""
     return rx.vstack(
-        rx.heading("Hosebeast, Eh", size="2xl"),
-        red_green_button(
-            "Turn On Relay 1",
-            "Turn Off Relay 1",
-            var_conditional=HosebeastState.relay_1_off,
-            action=HosebeastState.toggle_relay_1,
-        ),
-        red_green_button(
-            "Turn On Relay 2",
-            "Turn Off Relay 2",
-            var_conditional=HosebeastState.relay_2_off,
-            action=HosebeastState.toggle_relay_2,
-        ),
-        rx.heading("ADC Settings", size="2xl"),
-        rx.vstack(
-            rx.hstack(
-                rx.text("Gain:"),
-                rx.select(
-                    ["2/3", "1", "2", "4", "8", "16"],
-                    value=HosebeastState.adc_gain,
-                    default_value="1",
-                    on_change=HosebeastState.update_adc_gain,
-                    width="100%",
-                ),
+        rx.heading("Hosebeast", size="2xl"),
+        rx.hstack(
+            red_green_button(
+                "Pump 1 On",
+                "Pump 1 Off",
+                var_conditional=HosebeastState.relay_1_off,
+                action=HosebeastState.toggle_relay_1,
             ),
+            red_green_button(
+                "Pump 2 On",
+                "Pump 2 Off",
+                var_conditional=HosebeastState.relay_2_off,
+                action=HosebeastState.toggle_relay_2,
+            ),
+        ),
+        rx.vstack(
+            # rx.hstack(
+            #     rx.text("Gain:"),
+            #     rx.select(
+            #         ["2/3", "1", "2", "4", "8", "16"],
+            #         value=HosebeastState.adc_gain,
+            #         default_value="1",
+            #         on_change=HosebeastState.update_adc_gain,
+            #         width="100%",
+            #     ),
+            # ),
             rx.hstack(
-                rx.text("Depth:"),
-                rx.text(HosebeastState.water_depth.to_string(), " cm"),
+                rx.text("Depth:", size="5", weight="bold"),
+                rx.text(
+                    HosebeastState.water_depth.to_string(),
+                    " cm",
+                    size="5",
+                    weight="bold",
+                ),
             ),
             rx.hstack(
                 rx.text("Raw:"),
                 rx.text(HosebeastState.adc_raw, ""),
             ),
-            rx.hstack(
-                rx.text("Voltage:"),
-                rx.text(HosebeastState.adc_voltage, " V"),
-            ),
+            # rx.hstack(
+            #     rx.text("Voltage:"),
+            #     rx.text(HosebeastState.adc_voltage, " V"),
+            # ),
             rx.heading("Water Depth Over Time", size="xl"),
             water_depth_chart(),
             calibration_accordion(),
@@ -382,31 +427,15 @@ def water_depth_chart() -> rx.Component:
             spacing="4",
         ),
         rx.recharts.line_chart(
-            # rx.recharts.line(
-            #     data_key="water_depth",
-            #     unit="cm",
-            #     stroke="#8884d8",
-            #     name="Depth",
-            #     type_="monotone",
-            #     dot=False,
-            # ),
             rx.recharts.line(
-                data_key="raw_value",
-                stroke="#4884d8",
-                name="Raw",
+                data_key="water_depth",
+                unit="cm",
+                stroke="#8884d8",
+                name="Depth",
                 type_="monotone",
                 dot=False,
+                y_axis_id="right",
             ),
-            # FIXME:
-            # rx.recharts.x_axis(
-            #     data_key="timestamp",
-            #     type_="number",
-            #     # scale="time",
-            #     # allow_data_overflow=False,
-            #     # allow_decimals=True,
-            #     # domain=[x_date_min, x_date_max],
-            #     # domain=["dataMin", "dataMax"],
-            # ),
             # FIXME: This looks OK-ish with datetime and "category" type,
             # but the x-axis then gives equal space to each data element, rather
             # than their semantic meaning.
@@ -418,7 +447,22 @@ def water_depth_chart() -> rx.Component:
             # From what I can see, this is not possible in Reflex, because we can't
             # pass a callable for tickFunction.
             rx.recharts.x_axis(data_key="datetime", type_="category", tick_count=2),
-            rx.recharts.y_axis(),
+            rx.recharts.y_axis(
+                data_key="water_depth", orientation="right", y_axis_id="right"
+            ),
+            # When showing raw values as well as depth values, we put an
+            # extra axis on the left. turned off for now
+            # rx.recharts.line(
+            #     data_key="raw_value",
+            #     stroke="#4884d8",
+            #     name="Raw",
+            #     type_="monotone",
+            #     dot=False,
+            #     y_axis_id="left",
+            # ),
+            # rx.recharts.y_axis(
+            #     data_key="raw_value", orientation="left", y_axis_id="left"
+            # ),
             rx.recharts.graphing_tooltip(),
             data=HosebeastState.depth_data,
             width=400,
