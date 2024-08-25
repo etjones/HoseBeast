@@ -40,10 +40,12 @@ app = rx.App(
 
 VALID_TIME_RANGES = ["day", "week", "month", "all"]
 
+VALID_TIME_UNITS = ["minutes", "hours", "days"]
+
 SENSOR: SomeADCWrapper = get_adc_channel(0, gain=1.0)
 
 
-class HosebeastState(rx.State):
+class HBState(rx.State):
     """The app state."""
 
     relay_1_off: bool = True
@@ -56,6 +58,13 @@ class HosebeastState(rx.State):
     time_range: str = "day"  # one of VALID_TIME_RANGES
     depth_data: list[dict[str, float]] = []
 
+    # Pump scheduling
+    p1_start_time: str = "4:30"
+    p1_duration_mins: int = 15
+    p1_repeat_interval: int = 1
+    p1_repeat_units: str = "days"  # from VALID_TIME_UNITS
+
+    # Backend-only vars
     _update_secs: int = 2
     _update_is_running: bool = False
     _db_update_secs: int = 60
@@ -128,7 +137,7 @@ class HosebeastState(rx.State):
 
         # Store actual_depth and adc_raw in the database
         adc_gain = float(self.adc_gain)
-        now_minute = datetime.now().replace(second=0, microsecond=0)
+        now_minute = even_minute()
         DB["calibration_points"].insert(
             {
                 "timestamp": now_minute.timestamp(),
@@ -178,9 +187,7 @@ class HosebeastState(rx.State):
         )
 
         if calibration:
-            # ETJ DEBUG
             print(f"Loaded calibration: {calibration}")
-            # END DEBUG
             self._depth_slope = calibration["slope"]
             self._depth_intercept = calibration["intercept"]
 
@@ -236,13 +243,9 @@ class HosebeastState(rx.State):
         LIMIT ?
         """
         data = DB.query(query, [start_ts, interval_rows, rows_to_fetch])
-
-        # data = DB.query(query, [start_ts, rows_to_fetch])
+        # NOTE: I'm not sure why I need to call list() on the returned "data"
+        # generator, but if I don't, I get an empty list
         rows = [r for r in list(data)]
-        # ETJ DEBUG
-        # # print(f"rows = {len(rows)}")
-        # print(f"{rows =}")
-        # END DEBUG
         return rows
 
     def update_adc_gain(self, gain: str):
@@ -264,15 +267,49 @@ class HosebeastState(rx.State):
             else:
                 self._update_is_running = True
 
-            # Load the calibration data from the database;
+            # Load info data from the database;
             # we only need to do this once
+            # self.check_relay_schedule()
+            self.load_schedule_from_db()
             self.load_calibration()
-            self.depth_data = self.load_water_depth_data()
+            self.update_depth_data()
+            yield HBState.check_relay_schedule()
 
         while True:
             async with self:
                 await self.update_adc_voltage()
             await asyncio.sleep(self._update_secs)
+
+    @rx.background
+    async def check_relay_schedule(self):
+        while True:
+            async with self:
+                now = datetime.now()
+                next_start, next_end = calculate_next_relay_times(
+                    self.p1_start_time,
+                    self.p1_duration_mins,
+                    self.p1_repeat_interval,
+                    self.p1_repeat_units,
+                )
+                # print(
+                #     f"{now}: Checking for relay schedules for range ({next_start}, {next_end})"
+                # )
+
+                if next_start <= now < next_end:
+                    print(
+                        f"{now}: Inside a pump-on region: ({next_start}, {next_end}); turning on"
+                    )
+
+                    if self.relay_1_off:
+                        await self.toggle_relay_1()
+                elif not self.relay_1_off:
+                    print(
+                        f"{now}: Outside region  ({next_start}, {next_end}); turning off"
+                    )
+                    await self.toggle_relay_1()
+            # Sleep until the top of the next minute
+            until_next_minute = even_minute() + timedelta(seconds=60) - now
+            await asyncio.sleep(until_next_minute.total_seconds())  # Check every minute
 
     async def store_adc_state(self):
         now = time.time()
@@ -288,10 +325,10 @@ class HosebeastState(rx.State):
         self._last_db_time = now
         # NOTE: if we start storing differently than once a minute,
         # we might need to adjust the datetime we set here
-        this_minute = datetime.now().replace(second=0, microsecond=0)
+        now_minute = even_minute()
         row = {
-            "timestamp": this_minute.timestamp(),
-            "datetime": this_minute.isoformat(),
+            "timestamp": now_minute.timestamp(),
+            "datetime": now_minute.isoformat(),
             "raw_value": mean_raw,
             "water_depth": mean_depth,
         }
@@ -299,6 +336,73 @@ class HosebeastState(rx.State):
         DB["water_depths"].insert(row, pk="timestamp", replace=True)
         # Every time we store data, let's reload the graph data, too
         self.update_depth_data()
+
+    # ===================
+    # = pump scheduling =
+    # ===================
+    def set_p1_start_time(self, val: str):
+        self.p1_start_time = val
+        self.store_schedule()
+
+    def set_p1_duration_mins(self, val: str):
+        self.p1_duration_mins = int(val)
+        self.store_schedule()
+
+    def set_p1_repeat_interval(self, val: str):
+        self.p1_repeat_interval = int(val)
+        self.store_schedule()
+
+    def set_p1_repeat_units(self, val: str):
+        self.p1_repeat_units = val
+        self.store_schedule()
+
+    @rx.var
+    def next_relay_1_times(self) -> tuple[str, str]:
+        next_start, next_end = calculate_next_relay_times(
+            self.p1_start_time,
+            self.p1_duration_mins,
+            self.p1_repeat_interval,
+            self.p1_repeat_units,
+        )
+        return (
+            next_start.strftime("%Y-%m-%d %H:%M:%S"),
+            next_end.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+    def load_schedule_from_db(self):
+        if "schedules" not in DB.table_names():
+            return
+        schedule = DB["schedules"].get(1)  # Assuming we use id=1 for the first schedule
+        if schedule:
+            self.p1_start_time = schedule["start_time"]
+            self.p1_duration_mins = schedule["duration_mins"]
+            self.p1_repeat_interval = schedule["repeat_interval"]
+            self.p1_repeat_units = schedule["repeat_units"]
+
+    def store_schedule(self):
+        DB["schedules"].upsert(
+            {
+                "id": 1,
+                "start_time": self.p1_start_time,
+                "duration_mins": self.p1_duration_mins,
+                "repeat_interval": self.p1_repeat_interval,
+                "repeat_units": self.p1_repeat_units,
+            },
+            pk="id",
+        )
+
+    def update_schedule(
+        self,
+        start_time: str,
+        duration_mins: int,
+        repeat_interval: int,
+        repeat_units: str,
+    ):
+        self.p1_start_time = start_time
+        self.p1_duration_mins = duration_mins
+        self.p1_repeat_interval = repeat_interval
+        self.p1_repeat_units = repeat_units
+        self.store_schedule()()
 
 
 # ===========
@@ -355,12 +459,79 @@ def linear_regression_with_outlier_removal(
     return calculate_regression(filtered_points)
 
 
-# ==========
-# = LAYOUT =
-# ==========
+def calculate_next_relay_times(
+    start_time: str, duration_mins: int, repeat_interval: int, repeat_units: str
+) -> tuple[datetime, datetime]:
+    """
+    Given input values defining a range & repeat pattern, tell us the next
+    time it will be valid. BUT- if we're currently INSIDE a valid range, return
+    that range.
+    """
+    now = datetime.now()
+    today = now.date()
+    start_hour, start_minute = (0, 0)
+    try:
+        # users will often have invalid values in a text field ('4:', '', '3')
+        # in the course of entering a date. ignore it if it doesn't work
+        start_hour, start_minute = map(int, start_time.split(":"))
+    except ValueError:
+        pass
+
+    next_start = datetime.combine(
+        today, datetime.min.time().replace(hour=start_hour, minute=start_minute)
+    )
+
+    while next_start <= now:
+        if repeat_units == "minutes":
+            next_start += timedelta(minutes=repeat_interval)
+        elif repeat_units == "hours":
+            next_start += timedelta(hours=repeat_interval)
+        elif repeat_units == "days":
+            next_start += timedelta(days=repeat_interval)
+        elif repeat_units == "weeks":
+            next_start += timedelta(weeks=repeat_interval)
+
+        next_end = next_start + timedelta(minutes=duration_mins)
+        # if now is between next_start and next_end, we're in a valid
+        # range right now; return it
+        if next_start <= now <= next_end:
+            break
+
+    return next_start, next_end
 
 
-@template(route="/hosebeast", title="Hosebeast")
+def delete_db_range(
+    start_dt: datetime | None = None,
+    end_dt: datetime | None = None,
+    table_name: str = "water_depths",
+) -> int:
+    if start_dt is None:
+        start_dt = datetime(2024, 8, 1)
+    if end_dt is None:
+        end_dt = datetime.now()
+
+    start_ts = start_dt.timestamp()
+    end_ts = end_dt.timestamp()
+
+    table = DB[table_name]
+    rows_before = table.count
+    table.delete_where("timestamp >= ? AND timestamp <= ?", [start_ts, end_ts])
+    rows_after = table.count
+
+    return rows_before - rows_after
+
+
+def even_minute(dt: datetime | None = None) -> datetime:
+    dt = dt or datetime.now()
+    return dt.replace(second=0, microsecond=0)
+
+
+# ===============
+# = LAYOUT & UI =
+# ===============
+
+
+@template(route="/", title="Hosebeast")
 def hosebeast_layout() -> rx.Component:
     """The main layout of the app."""
     return rx.vstack(
@@ -369,31 +540,32 @@ def hosebeast_layout() -> rx.Component:
             red_green_button(
                 "Pump 1 On",
                 "Pump 1 Off",
-                var_conditional=HosebeastState.relay_1_off,
-                action=HosebeastState.toggle_relay_1,
+                var_conditional=HBState.relay_1_off,
+                action=HBState.toggle_relay_1,
             ),
             red_green_button(
                 "Pump 2 On",
                 "Pump 2 Off",
-                var_conditional=HosebeastState.relay_2_off,
-                action=HosebeastState.toggle_relay_2,
+                var_conditional=HBState.relay_2_off,
+                action=HBState.toggle_relay_2,
             ),
         ),
+        schedule_interface(),
         rx.vstack(
             # rx.hstack(
             #     rx.text("Gain:"),
             #     rx.select(
             #         ["2/3", "1", "2", "4", "8", "16"],
-            #         value=HosebeastState.adc_gain,
+            #         value=HBState.adc_gain,
             #         default_value="1",
-            #         on_change=HosebeastState.update_adc_gain,
+            #         on_change=HBState.update_adc_gain,
             #         width="100%",
             #     ),
             # ),
             rx.hstack(
                 rx.text("Depth:", size="5", weight="bold"),
                 rx.text(
-                    HosebeastState.water_depth.to_string(),
+                    HBState.water_depth.to_string(),
                     " cm",
                     size="5",
                     weight="bold",
@@ -401,29 +573,58 @@ def hosebeast_layout() -> rx.Component:
             ),
             rx.hstack(
                 rx.text("Raw:"),
-                rx.text(HosebeastState.adc_raw, ""),
+                rx.text(HBState.adc_raw, ""),
             ),
             # rx.hstack(
             #     rx.text("Voltage:"),
-            #     rx.text(HosebeastState.adc_voltage, " V"),
+            #     rx.text(HBState.adc_voltage, " V"),
             # ),
             rx.heading("Water Depth Over Time", size="xl"),
             water_depth_chart(),
             calibration_accordion(),
         ),
-        on_mount=HosebeastState.start_adc_updates,
+        on_mount=HBState.start_adc_updates,
+    )
+
+
+def schedule_interface() -> rx.Component:
+    return rx.vstack(
+        rx.hstack(
+            rx.text("Pump 1 on at "),
+            rx.input(
+                value=HBState.p1_start_time,
+                on_change=HBState.set_p1_start_time,
+                width=60,
+            ),
+            rx.text(" for "),
+            rx.input(
+                value=HBState.p1_duration_mins,
+                on_change=HBState.set_p1_duration_mins,
+                width=40,
+            ),
+            rx.text(" minutes, every "),
+            rx.input(
+                value=HBState.p1_repeat_interval,
+                on_change=HBState.set_p1_repeat_interval,
+                width=40,
+            ),
+            rx.select(
+                VALID_TIME_UNITS,
+                value=HBState.p1_repeat_units,
+                on_change=HBState.set_p1_repeat_units,
+            ),
+        ),
+        rx.text(f"{HBState.next_relay_1_times[0]} - {HBState.next_relay_1_times[1]}"),
     )
 
 
 def water_depth_chart() -> rx.Component:
     return rx.vstack(
         rx.hstack(
-            rx.button("Day", on_click=lambda: HosebeastState.set_time_range("day")),
-            rx.button("Week", on_click=lambda: HosebeastState.set_time_range("week")),
-            rx.button("Month", on_click=lambda: HosebeastState.set_time_range("month")),
-            rx.button(
-                "All Time", on_click=lambda: HosebeastState.set_time_range("all")
-            ),
+            rx.button("Day", on_click=lambda: HBState.set_time_range("day")),
+            rx.button("Week", on_click=lambda: HBState.set_time_range("week")),
+            rx.button("Month", on_click=lambda: HBState.set_time_range("month")),
+            rx.button("All Time", on_click=lambda: HBState.set_time_range("all")),
             spacing="4",
         ),
         rx.recharts.line_chart(
@@ -431,6 +632,7 @@ def water_depth_chart() -> rx.Component:
                 data_key="water_depth",
                 unit="cm",
                 stroke="#8884d8",
+                stroke_width=3,
                 name="Depth",
                 type_="monotone",
                 dot=False,
@@ -451,7 +653,7 @@ def water_depth_chart() -> rx.Component:
                 data_key="water_depth", orientation="right", y_axis_id="right"
             ),
             # When showing raw values as well as depth values, we put an
-            # extra axis on the left. turned off for now
+            # extra axis on the left. Turned off for now
             # rx.recharts.line(
             #     data_key="raw_value",
             #     stroke="#4884d8",
@@ -464,9 +666,9 @@ def water_depth_chart() -> rx.Component:
             #     data_key="raw_value", orientation="left", y_axis_id="left"
             # ),
             rx.recharts.graphing_tooltip(),
-            data=HosebeastState.depth_data,
-            width=400,
-            height=400,
+            data=HBState.depth_data,
+            width=360,
+            height=240,
         ),
     )
 
@@ -487,11 +689,13 @@ def calibration_accordion() -> rx.Component:
                     rx.button("Calibrate", type="submit"),
                     width="100%",
                 ),
-                on_submit=HosebeastState.handle_calibration_submit,
+                on_submit=HBState.handle_calibration_submit,
                 reset_on_submit=True,
                 width="100%",
             ),
-            collabsible=True,
-            variant="ghost",  # 'ghost' is a transparent background
         ),
+        collabsible=True,
+        variant="ghost",  # 'ghost' is a transparent background
+        type="multiple",
+        width="100%",
     )
