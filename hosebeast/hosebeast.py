@@ -341,16 +341,32 @@ class HBState(rx.State):
     # = pump scheduling =
     # ===================
     def set_p1_start_time(self, val: str):
-        self.p1_start_time = val
-        self.store_schedule()
+        # val should be hh:mm, with integers on either side
+        # of the colon. If we don't match those, just ignore
+        try:
+            h, m = (int(v) for v in val.split(":"))
+            self.p1_start_time = val
+            self.store_schedule()
+        except ValueError:
+            pass
 
+    # in case of bad data, just ignore; usually good data
+    # is typed immediately afterwards
     def set_p1_duration_mins(self, val: str):
-        self.p1_duration_mins = int(val)
-        self.store_schedule()
+        try:
+            self.p1_duration_mins = int(val)
+            self.store_schedule()
+        except ValueError:
+            pass
 
     def set_p1_repeat_interval(self, val: str):
-        self.p1_repeat_interval = int(val)
-        self.store_schedule()
+        # in case of bad data, just ignore; usually good data
+        # is typed immediately afterwards
+        try:
+            self.p1_repeat_interval = int(val)
+            self.store_schedule()
+        except ValueError:
+            pass
 
     def set_p1_repeat_units(self, val: str):
         self.p1_repeat_units = val
