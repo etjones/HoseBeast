@@ -10,8 +10,6 @@ import time
 
 from datetime import datetime, timedelta
 
-# from .pages import index, about, profile, settings, table  # noqa: F401
-from .templates import template
 from . import styles
 from .relay_control import set_relay, RELAY_1, RELAY_2
 from .pressure_estimator import (
@@ -26,17 +24,6 @@ from .web_utils import red_green_button
 from sqlite_utils import Database
 
 DB = Database("hosebeast.db")
-
-
-# PRESSURE = get_adc_channel(0, 1, gain=1.0)
-
-# Create the app.
-app = rx.App(
-    style=styles.base_style,
-    stylesheets=styles.base_stylesheets,
-    title="Dashboard Template",
-    description="A dashboard template for Reflex.",
-)
 
 VALID_TIME_RANGES = ["day", "week", "month", "all"]
 
@@ -55,7 +42,7 @@ class HBState(rx.State):
     adc_voltage: float = 2.512
     adc_raw: int = 16000
 
-    time_range: str = "day"  # one of VALID_TIME_RANGES
+    time_range: str = "week"  # one of VALID_TIME_RANGES
     depth_data: list[dict[str, float]] = []
 
     # Pump scheduling
@@ -96,7 +83,7 @@ class HBState(rx.State):
     @rx.var
     def water_depth(self) -> float:
         depth = self.adc_raw * self._depth_slope + self._depth_intercept
-        return round(depth, 2)
+        return round(depth, 1)
 
     async def handle_calibration_submit(self, form_dict: dict):
         try:
@@ -219,7 +206,12 @@ class HBState(rx.State):
 
         # total_seconds = (now - start_date).total_seconds()
 
-        rows_to_fetch = 400
+        rows_to_fetch = 200
+        # NOTE: 2024-08-31: Because this query skips integer-numbered rows,
+        # we can only be precise about the number of rows fetched within
+        # +/- rows_to_fetch rows. So... don't limit the query to rows_to_fetch
+        # rows; that results in missing the most recent data.
+
 
         # Count the rows we'd get, in the entire range from start_ts to now,
         # then divide by the number of rows we want to fetch and query for
@@ -227,8 +219,8 @@ class HBState(rx.State):
         # NOTE: if we've been adding to the table irregularly, this will
         # skip those gaps, overrepresenting times when we did get data
         # Maybe we really want something like "get one value for each of
-        # rows_to_fetch timeslots between start_ts and now, and insert dummy
-        # zero vals if a given timeslot is empty"
+        # rows_to_fetch timeslots between start_ts and now, and interpolate 
+        # vals if a given timeslot is empty"
         rows_available = DB["water_depths"].count_where("timestamp >= ?", [start_ts])
         interval_rows = max(1, int(rows_available / rows_to_fetch))
 
@@ -240,9 +232,10 @@ class HBState(rx.State):
         ) AS numbered
         WHERE row_num % ? = 0
         ORDER BY timestamp
-        LIMIT ?
         """
-        data = DB.query(query, [start_ts, interval_rows, rows_to_fetch])
+        # LIMIT ?
+        # data = DB.query(query, [start_ts, interval_rows, rows_to_fetch])
+        data = DB.query(query, [start_ts, interval_rows])
         # NOTE: I'm not sure why I need to call list() on the returned "data"
         # generator, but if I don't, I get an empty list
         rows = [r for r in list(data)]
@@ -319,7 +312,8 @@ class HBState(rx.State):
             return
 
         mean_raw, mean_depth = await self.average_raw_and_depths()
-
+        # We can't go below 0
+        mean_depth = max(0, mean_depth)
         # We haven't stored the data in the last self._db_update_secs seconds,
         # so store it now
         self._last_db_time = now
@@ -547,11 +541,10 @@ def even_minute(dt: datetime | None = None) -> datetime:
 # ===============
 
 
-@template(route="/", title="Hosebeast")
 def hosebeast_layout() -> rx.Component:
     """The main layout of the app."""
     return rx.vstack(
-        rx.heading("Hosebeast", size="2xl"),
+        rx.heading("Hosebeast", size="3xl"),
         rx.hstack(
             red_green_button(
                 "Pump 1 On",
@@ -599,6 +592,8 @@ def hosebeast_layout() -> rx.Component:
             water_depth_chart(),
             calibration_accordion(),
         ),
+        padding_top="2em",
+        padding_left="2em",
         on_mount=HBState.start_adc_updates,
     )
 
@@ -606,7 +601,7 @@ def hosebeast_layout() -> rx.Component:
 def schedule_interface() -> rx.Component:
     return rx.vstack(
         rx.hstack(
-            rx.text("Pump 1 on at "),
+            rx.text("Pumps on at "),
             rx.input(
                 value=HBState.p1_start_time,
                 on_change=HBState.set_p1_start_time,
@@ -618,7 +613,10 @@ def schedule_interface() -> rx.Component:
                 on_change=HBState.set_p1_duration_mins,
                 width=40,
             ),
-            rx.text(" minutes, every "),
+            rx.text(" minutes"),
+        ),
+        rx.hstack(
+            rx.text("Every "),
             rx.input(
                 value=HBState.p1_repeat_interval,
                 on_change=HBState.set_p1_repeat_interval,
@@ -637,17 +635,49 @@ def schedule_interface() -> rx.Component:
 def water_depth_chart() -> rx.Component:
     return rx.vstack(
         rx.hstack(
-            rx.button("Day", on_click=lambda: HBState.set_time_range("day")),
-            rx.button("Week", on_click=lambda: HBState.set_time_range("week")),
-            rx.button("Month", on_click=lambda: HBState.set_time_range("month")),
-            rx.button("All Time", on_click=lambda: HBState.set_time_range("all")),
+            rx.button(
+                "Day",
+                on_click=lambda: HBState.set_time_range("day"),
+                box_shadow=rx.cond(
+                    HBState.time_range == "day",
+                    "0 0 0 4px #3182CE",
+                    "none"
+                ),
+            ),
+            rx.button(
+                "Week",
+                on_click=lambda: HBState.set_time_range("week"),
+                box_shadow=rx.cond(
+                    HBState.time_range == "week",
+                    "0 0 0 4px #3182CE",
+                    "none"
+                ),
+            ),
+            rx.button(
+                "Month",
+                on_click=lambda: HBState.set_time_range("month"),
+                box_shadow=rx.cond(
+                    HBState.time_range == "month",
+                    "0 0 0 4px #3182CE",
+                    "none"
+                ),
+            ),
+            rx.button(
+                "All Time",
+                on_click=lambda: HBState.set_time_range("all"),
+                box_shadow=rx.cond(
+                    HBState.time_range == "all",
+                    "0 0 0 4px #3182CE",
+                    "none"
+                ),
+                            ),
             spacing="4",
         ),
         rx.recharts.line_chart(
             rx.recharts.line(
                 data_key="water_depth",
                 unit="cm",
-                stroke="#8884d8",
+                stroke="#3182CE",
                 stroke_width=3,
                 name="Depth",
                 type_="monotone",
@@ -715,3 +745,16 @@ def calibration_accordion() -> rx.Component:
         type="multiple",
         width="100%",
     )
+
+# ===============
+# = ENTRY POINT =
+# ===============
+
+# Create the app.
+app = rx.App(
+    style=styles.base_style,
+    stylesheets=styles.base_stylesheets,
+    title="Hosebeast Irrigation Controller",
+    description="Irrigation control system for Raspberry Pi 4",
+)
+app.add_page(hosebeast_layout(), "/")
