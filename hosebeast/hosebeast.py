@@ -107,6 +107,7 @@ class HBState(rx.State):
             await asyncio.sleep(1)
         mean_raw = int(total / measurements)
         mean_depth = float(total_depth / measurements)
+        mean_depth = round(mean_depth, 1)
         return (mean_raw, mean_depth)
 
     async def calibrate_depth(self, actual_depth: float):
