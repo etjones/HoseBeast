@@ -491,6 +491,7 @@ def calculate_next_relay_times(
     next_start = datetime.combine(
         today, datetime.min.time().replace(hour=start_hour, minute=start_minute)
     )
+    next_end = next_start + timedelta(minutes=duration_mins)
 
     while next_start <= now:
         if repeat_units == "minutes":
