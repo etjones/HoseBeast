@@ -112,7 +112,7 @@ class ADCWrapper:
         self.ads.gain = gain
 
 
-def sine_wave(seconds: int, period_seconds: int) -> float:
+def sine_wave(seconds: int, period_seconds: int) -> int:
     v = seconds % period_seconds / period_seconds
     value = 16383 + int(8192 * (1 + sin(v * 2 * pi)))
     return value
