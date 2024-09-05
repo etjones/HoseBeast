@@ -9,7 +9,7 @@ def red_green_button(
     action: Any,
     false_action: Any | None = None,
     **props,
-) -> rx.cond:
+) -> rx.Component:
     false_action = false_action or action
     # Return a green and shows one label when var_conditional is True,
     # or red and shows false_label otherwise.
