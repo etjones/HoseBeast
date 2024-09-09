@@ -18,7 +18,7 @@ from .pressure_estimator import (
     MockADCWrapper,  # noqa: F401
     ADCWrapper,  # noqa: F401
 )
-from .web_utils import red_green_button
+from .web_utils import red_green_button, get_bool_from_env
 
 
 from sqlite_utils import Database
@@ -28,9 +28,12 @@ DB = Database("hosebeast.db")
 VALID_TIME_RANGES = ["day", "week", "month", "all"]
 
 VALID_TIME_UNITS = ["minutes", "hours", "days"]
+VALID_MEASUREMENT_UNITS = ["cm", "in", "gal", "L"]
 
-SENSOR: SomeADCWrapper = get_adc_channel(0, gain=1.0)
-
+# reflex doesn't have a good way to get command line arguments.
+# So we read from environment vars instead
+HOSEBEAST_MOCK = get_bool_from_env("HOSEBEAST_MOCK")
+SENSOR: SomeADCWrapper = get_adc_channel(0, gain=1.0, mock=HOSEBEAST_MOCK)
 
 class HBState(rx.State):
     """The app state."""
