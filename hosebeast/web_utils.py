@@ -1,5 +1,6 @@
 import reflex as rx
 from typing import Any
+import os
 
 
 def red_green_button(
@@ -19,3 +20,18 @@ def red_green_button(
         rx.button(true_label, on_click=action, color_scheme="green", **props),
         rx.button(false_label, on_click=false_action, color_scheme="red", **props),
     )
+
+
+def get_bool_from_env(env_var_name: str) -> bool:
+    """
+    Get a boolean value from an environment variable.
+
+    Args:
+        env_var_name (str): The name of the environment variable.
+
+    Returns:
+        bool: True if the environment variable is set and not '0' or 'False' (case-insensitive),
+              False if undefined or '0' or 'False'
+    """
+    env_value = os.environ.get(env_var_name, "false")
+    return env_value.lower() not in ("0", "false", "f")
