@@ -34,12 +34,14 @@ VALID_GAINS = [2 / 3, 1.0, 2.0, 4.0, 8.0, 16.0]
 
 
 def get_adc_channel(
-    pin_0: int, pin_1: int | None = None, gain: float = 1.0
+    pin_0: int, pin_1: int | None = None, gain: float = 1.0, mock=False
 ) -> SomeADCWrapper:
     """
     Return an ADCWrapper object for the given pins and gain.
     If there's a live I2C connection, use that. Otherwise, use a mock ADC.
     """
+    global MOCK
+    MOCK = mock
     if MOCK:
         chan = MockADCWrapper(pin_0, pin_1, gain)
     else:
