@@ -8,20 +8,21 @@ print_help() {
     echo "  -h, --help      Display this help message"
 }
 
+# Global variables
+MOCK=0
+ENV="dev"
+
 # Function to parse command line arguments
 parse_arguments() {
-    local mock=0
-    local env="dev"
-
     while [[ $# -gt 0 ]]; do
         case $1 in
             --mock)
-                mock="$2"
+                MOCK="$2"
                 shift 2
                 ;;
             --env)
-                env="$2"
-                if [[ "$env" != "dev" && "$env" != "prod" ]]; then
+                ENV="$2"
+                if [[ "$ENV" != "dev" && "$ENV" != "prod" ]]; then
                     echo "Error: --env must be either 'dev' or 'prod'"
                     exit 1
                 fi
@@ -29,6 +30,7 @@ parse_arguments() {
                 ;;
             -h|--help)
                 print_help
+                echo "Parsed arguments: mock=$MOCK, env=$ENV"
                 exit 0
                 ;;
             *)
@@ -39,13 +41,13 @@ parse_arguments() {
         esac
     done
 
-    echo "$mock $env"
+    echo "Parsed arguments: mock=$MOCK, env=$ENV"
 }
 
 # Function to check and attach to tmux session
 attach_or_start_hosebeast() {
-    # Check if a tmux session named "hosebeast" already exists
-    if tmux has-session -t hosebeast 2>/dev/null; then
+    # Check if a tmux session named "hosebeast" already exists and reflex is running
+    if tmux has-session -t hosebeast 2>/dev/null && pgrep -x "reflex" > /dev/null; then
         echo "Hosebeast is already running in a tmux session. Attaching..."
         tmux attach -t hosebeast
     else
@@ -53,6 +55,7 @@ attach_or_start_hosebeast() {
         echo "Starting Hosebeast in a new tmux session..."
         export HOSEBEAST_MOCK=$MOCK
         tmux new-session -d -s hosebeast
+        sleep 0.4 
         tmux send-keys -t hosebeast "uv run reflex run --env $ENV" C-m
         tmux attach -t hosebeast
     fi    
@@ -64,7 +67,8 @@ attach_or_start_hosebeast() {
 
 # Main function to orchestrate the script
 main() {
-    read -r MOCK ENV <<< $(parse_arguments "$@")
+    # echo "Arguments passed to script: $@"
+    parse_arguments "$@"
     cd $HOME/dev/hosebeast
     attach_or_start_hosebeast
 }
